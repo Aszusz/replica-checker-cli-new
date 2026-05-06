@@ -9,9 +9,9 @@ CONSOLE_LOG="/local/notesdata/IBM_TECHNICAL_SUPPORT/console.log"
 
 fail() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 
-[[ -f "$CONSOLE_LOG" ]] || fail "Console log not found at $CONSOLE_LOG"
+sudo test -f "$CONSOLE_LOG" || fail "Console log not found at $CONSOLE_LOG"
 
-marker=$(wc -l < "$CONSOLE_LOG")
+marker=$(sudo wc -l "$CONSOLE_LOG" | awk '{print $1}')
 
 sudo -u domino bash -c \
     'cd /local/notesdata && /opt/hcl/domino/bin/server -c "tell genesis info"' \
@@ -20,7 +20,7 @@ sudo -u domino bash -c \
 
 sleep 3
 
-output=$(tail -n +$((marker + 1)) "$CONSOLE_LOG")
+output=$(sudo tail -n +$((marker + 1)) "$CONSOLE_LOG")
 
 if echo "$output" | grep -q "Genesis:.*version"; then
     echo "$output" | grep -m1 "version" | sed 's/.*version[[:space:]]*//' | awk '{print $1}'
