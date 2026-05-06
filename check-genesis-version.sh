@@ -14,7 +14,7 @@ sudo test -f "$CONSOLE_LOG" || fail "Console log not found at $CONSOLE_LOG"
 marker=$(sudo wc -l "$CONSOLE_LOG" | awk '{print $1}')
 
 sudo -u domino bash -c \
-    'cd /local/notesdata && /opt/hcl/domino/bin/server -c "tell genesis info"' \
+    'cd /local/notesdata && /opt/lotus/bin/server -c "tell genesis info"' \
     >/dev/null 2>&1 \
     || fail "Failed to send command to Domino server (is it running?)"
 
