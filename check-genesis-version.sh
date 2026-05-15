@@ -13,7 +13,6 @@ session_open
 
 session_send_console \
     --cmd   "tell genesis info" \
-    --until "^Genesis: catalog" \
-    --match "^Genesis: "
+    --until "Genesis: catalog"
 
 session_close
