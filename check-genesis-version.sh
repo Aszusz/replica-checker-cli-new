@@ -16,18 +16,18 @@ log_user 0
 set timeout 10
 
 spawn telnet 0 1910
-expect -re "(250-.*)\n"
+expect -re "(250-\[^\n]*)\n"
 send_user "$expect_out(1,string)\n"
 
 send_user ">>> Glogin admin pass\n"
 send "Glogin admin pass\r"
-expect -re "(204-.*)\n"
+expect -re "(204-\[^\n]*)\n"
 send_user "$expect_out(1,string)\n"
 
 send_user ">>> Gstatus\n"
 send "Gstatus\r"
 expect -re "Configured domino servers:"
-expect -re "(240- (\\S+): (\\S+).*)\n"
+expect -re "(240- (\\S+): (\\S+)\[^\n]*)\n"
 set line $expect_out(1,string)
 set uid $expect_out(2,string)
 set state $expect_out(3,string)
@@ -40,7 +40,7 @@ if {$state ne "RUNNING"} {
 
 send_user ">>> Gconsole $uid\n"
 send "Gconsole $uid\r"
-expect -re "(210-.*)\n"
+expect -re "(210-\[^\n]*)\n"
 send_user "$expect_out(1,string)\n"
 
 # Gconsole replays recent console history on attach; drain it
@@ -72,6 +72,6 @@ while {1} {
 
 send_user ">>> Glogout\n"
 send "Glogout\r"
-expect -re "(251-.*)\n"
+expect -re "(251-\[^\n]*)\n"
 send_user "$expect_out(1,string)\n"
 EOF
