@@ -143,10 +143,14 @@ _session_drain_until() {
 #   "GW <code>\n<command>\n"        → gateway command; reply line = "<code>- ..."
 #   "CON <until>\n<match>\n<command>\n" → forwarded console; <match> may be empty
 _session_run() {
+    # Read the script from fd 3, NOT stdin. If we used `expect <<EOF` the
+    # heredoc would become expect's stdin, and the `gets stdin` calls below
+    # would read from the already-EOF heredoc instead of the coproc pipe —
+    # the helper would exit immediately after emitting READY.
     JEDI_PORT="$1" JEDI_USER="$2" JEDI_PASS="$3" \
     JEDI_READY="$_SESSION_READY" JEDI_DONE="$_SESSION_DONE" \
     JEDI_CLOSED="$_SESSION_CLOSED" JEDI_ERROR="$_SESSION_ERROR" \
-    expect <<'EXPECT_EOF'
+    expect /dev/fd/3 3<<'EXPECT_EOF'
 log_user 0
 set timeout 10
 
