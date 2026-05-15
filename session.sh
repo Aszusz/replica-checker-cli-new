@@ -14,9 +14,11 @@
 #   session_close
 #
 # API:
-#   session_open [--port N] [--user U] [--pass P]
+#   session_open [--port N] [--user U] [--pass P] [--verbose]
 #       Defaults: --port 1910 --user admin --pass pass.
 #       Aborts if the discovered server isn't RUNNING.
+#       --verbose echoes JeDI handshake lines and ">>> <command>" markers
+#       to stderr (matches the original check-genesis-version.sh trace).
 #
 #   session_send_gateway --cmd <command> --expect <code>
 #       For G* commands. Sends <command>, prints the matching "<code>- ..." line.
@@ -24,9 +26,14 @@
 #   session_send_console --cmd <command> --until <regex> [--match <regex>]
 #       For commands forwarded to the Domino console. Sends "C<command>" and
 #       prints every output line until one matches --until. The caller picks
-#       the terminator (e.g. "^Genesis: catalog" — the last line
-#       `tell genesis info` emits). Optional --match filters which lines are
-#       emitted (terminator still stops the loop even if it doesn't match).
+#       the terminator (e.g. "Genesis: catalog" — the last line `tell genesis
+#       info` emits).
+#
+#       Optional --match filters which lines are emitted (terminator still
+#       stops the loop even if it doesn't match). If --match contains a
+#       capture group, only the captured portion is emitted — handy for
+#       stripping Domino's "[PID:thread] DATE TIME  " prefix.
+#
 #       Filter inside the helper to avoid bash pipelines, which close
 #       the coproc fds in the subshell.
 #
@@ -58,17 +65,18 @@ session_open() {
         return 1
     }
 
-    local port=1910 user=admin pass=pass
+    local port=1910 user=admin pass=pass verbose=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --port) port="$2"; shift 2 ;;
-            --user) user="$2"; shift 2 ;;
-            --pass) pass="$2"; shift 2 ;;
+            --port)    port="$2"; shift 2 ;;
+            --user)    user="$2"; shift 2 ;;
+            --pass)    pass="$2"; shift 2 ;;
+            --verbose) verbose=1; shift ;;
             *) echo "ERROR: session_open: unknown arg: $1" >&2; return 1 ;;
         esac
     done
 
-    coproc _JEDI { _session_run "$port" "$user" "$pass"; }
+    coproc _JEDI { _session_run "$port" "$user" "$pass" "$verbose"; }
     _SESSION_PID=$_JEDI_PID
     _SESSION_OUT=${_JEDI[0]}
     _SESSION_IN=${_JEDI[1]}
@@ -147,7 +155,7 @@ _session_run() {
     # heredoc would become expect's stdin, and the `gets stdin` calls below
     # would read from the already-EOF heredoc instead of the coproc pipe —
     # the helper would exit immediately after emitting READY.
-    JEDI_PORT="$1" JEDI_USER="$2" JEDI_PASS="$3" \
+    JEDI_PORT="$1" JEDI_USER="$2" JEDI_PASS="$3" JEDI_VERBOSE="$4" \
     JEDI_READY="$_SESSION_READY" JEDI_DONE="$_SESSION_DONE" \
     JEDI_CLOSED="$_SESSION_CLOSED" JEDI_ERROR="$_SESSION_ERROR" \
     expect /dev/fd/3 3<<'EXPECT_EOF'
@@ -157,32 +165,53 @@ set timeout 10
 set port    $env(JEDI_PORT)
 set user    $env(JEDI_USER)
 set pass    $env(JEDI_PASS)
+set VERBOSE $env(JEDI_VERBOSE)
 set READY   $env(JEDI_READY)
 set DONE    $env(JEDI_DONE)
 set CLOSED  $env(JEDI_CLOSED)
 set ERROR   $env(JEDI_ERROR)
 
+# log_v: emit a diagnostic line to stderr when --verbose is on.
+# Stderr bypasses the bash framing protocol, so callers see it directly
+# and can silence with `2>/dev/null` if they only want data on stdout.
+proc log_v {msg} {
+    global VERBOSE
+    if {$VERBOSE ne ""} {
+        puts stderr $msg
+        flush stderr
+    }
+}
+
 spawn telnet 0 $port
-expect -re "250-\[^\n]*\n"
+expect -re "(250-\[^\n]*)\n"
+log_v $expect_out(1,string)
 
+log_v ">>> Glogin $user $pass"
 send "Glogin $user $pass\r"
-expect -re "204-\[^\n]*\n"
+expect -re "(204-\[^\n]*)\n"
+log_v $expect_out(1,string)
 
+log_v ">>> Gstatus"
 send "Gstatus\r"
 expect -re "Configured domino servers:"
-expect -re "240- (\\S+): (\\S+)\[^\n]*\n"
-set uid   $expect_out(1,string)
-set state $expect_out(2,string)
+expect -re "(240- (\\S+): (\\S+)\[^\n]*)\n"
+set status_line $expect_out(1,string)
+set uid         $expect_out(2,string)
+set state       $expect_out(3,string)
+log_v $status_line
 if {$state ne "RUNNING"} {
     send_user "$ERROR server $uid is $state, not RUNNING\n"
     exit 1
 }
 
+log_v ">>> Gconsole $uid"
 send "Gconsole $uid\r"
-expect -re "210-\[^\n]*\n"
+expect -re "(210-\[^\n]*)\n"
+log_v $expect_out(1,string)
 
 # Gconsole replays recent console history on attach. Drain it once so it
 # doesn't pollute the response to the first user command.
+log_v "(draining scrollback...)"
 set timeout 2
 expect {
     -re "(?s).+" { exp_continue }
@@ -196,14 +225,17 @@ while {1} {
     if {[gets stdin kind] == -1} break
 
     if {$kind eq "CLOSE"} {
+        log_v ">>> Glogout"
         send "Glogout\r"
-        expect -re "251-\[^\n]*\n"
+        expect -re "(251-\[^\n]*)\n"
+        log_v $expect_out(1,string)
         send_user "$CLOSED\n"
         break
     }
 
     if {[regexp {^GW (.+)$} $kind -> code]} {
         if {[gets stdin cmd] == -1} break
+        log_v ">>> $cmd"
         send "$cmd\r"
         expect {
             -re "($code-\[^\n]+)\n" { send_user "$expect_out(1,string)\n" }
@@ -216,14 +248,24 @@ while {1} {
     if {[regexp {^CON (.+)$} $kind -> term]} {
         if {[gets stdin match] == -1} break
         if {[gets stdin cmd]   == -1} break
+        log_v ">>> C$cmd"
         send "C$cmd\r"
         set looping 1
         while {$looping} {
             expect {
                 -re "(\[^\n]*)\n" {
                     set line $expect_out(1,string)
-                    if {$match eq "" || [regexp $match $line]} {
+                    if {$match eq ""} {
                         send_user "$line\n"
+                    } else {
+                        set sub1 ""
+                        if {[regexp $match $line full sub1]} {
+                            if {$sub1 ne ""} {
+                                send_user "$sub1\n"
+                            } else {
+                                send_user "$full\n"
+                            }
+                        }
                     }
                     if {[regexp $term $line]} { set looping 0 }
                 }

@@ -9,10 +9,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/session.sh"
 
 trap session_close EXIT
-session_open
+session_open --verbose
 
 session_send_console \
     --cmd   "tell genesis info" \
-    --until "Genesis: catalog"
+    --until "Genesis: catalog" \
+    --match "(Genesis: .*)"
 
 session_close
