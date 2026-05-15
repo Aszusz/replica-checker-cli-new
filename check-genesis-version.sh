@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Prints the local Domino server's Genesis info via JeDI.
-# Built on session.sh — the handshake (telnet/Glogin/Gstatus/Gconsole/Glogout)
-# is handled there. Aborts if the discovered server isn't RUNNING.
+# Prints the local Domino server's Genesis info.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/session.sh"
+source "$SCRIPT_DIR/domino.sh"
 
-trap session_close EXIT
-session_open --verbose
-
-session_send_console \
-    --cmd   "tell genesis info" \
-    --until "Genesis: catalog" \
-    --match "(Genesis: .*)"
-
-session_close
+run_domino_command \
+    --cmd     "tell genesis info" \
+    --until   "Genesis: catalog" \
+    --match   "(Genesis: .*)" \
+    --verbose
