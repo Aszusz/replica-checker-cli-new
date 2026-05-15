@@ -21,11 +21,14 @@
 #   session_send_gateway --cmd <command> --expect <code>
 #       For G* commands. Sends <command>, prints the matching "<code>- ..." line.
 #
-#   session_send_console --cmd <command> --until <terminator-regex>
+#   session_send_console --cmd <command> --until <regex> [--match <regex>]
 #       For commands forwarded to the Domino console. Sends "C<command>" and
-#       prints every output line until one matches <terminator-regex>. The
-#       caller picks the terminator (e.g. "^Genesis: catalog" — the last line
-#       `tell genesis info` emits).
+#       prints every output line until one matches --until. The caller picks
+#       the terminator (e.g. "^Genesis: catalog" — the last line
+#       `tell genesis info` emits). Optional --match filters which lines are
+#       emitted (terminator still stops the loop even if it doesn't match).
+#       Filter inside the helper to avoid bash pipelines, which close
+#       the coproc fds in the subshell.
 #
 #   session_close
 #       Sends Glogout and reaps the helper. Safe to call when no session open.
@@ -75,7 +78,10 @@ session_open() {
 
 session_close() {
     [[ -z "$_SESSION_PID" ]] && return 0
-    printf 'CLOSE\n' >&"$_SESSION_IN" 2>/dev/null || true
+    # Brace-group the redirect so a "Bad file descriptor" from a stale fd
+    # also lands in /dev/null (the shell-level redirect error happens before
+    # printf's own 2>/dev/null would apply).
+    { printf 'CLOSE\n' >&"$_SESSION_IN"; } 2>/dev/null || true
     _session_drain_until "$_SESSION_CLOSED" >/dev/null 2>&1 || true
     wait "$_SESSION_PID" 2>/dev/null || true
     _SESSION_PID="" _SESSION_IN="" _SESSION_OUT=""
@@ -98,18 +104,19 @@ session_send_gateway() {
 }
 
 session_send_console() {
-    local cmd="" terminator=""
+    local cmd="" terminator="" match=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --cmd)   cmd="$2"; shift 2 ;;
             --until) terminator="$2"; shift 2 ;;
+            --match) match="$2"; shift 2 ;;
             *) echo "ERROR: session_send_console: unknown arg: $1" >&2; return 1 ;;
         esac
     done
     [[ -n "$cmd"        ]] || { echo "ERROR: session_send_console: --cmd required" >&2; return 1; }
     [[ -n "$terminator" ]] || { echo "ERROR: session_send_console: --until required" >&2; return 1; }
 
-    printf 'CON %s\n%s\n' "$terminator" "$cmd" >&"$_SESSION_IN"
+    printf 'CON %s\n%s\n%s\n' "$terminator" "$match" "$cmd" >&"$_SESSION_IN"
     _session_drain_until "$_SESSION_DONE"
 }
 
@@ -134,7 +141,7 @@ _session_drain_until() {
 # stdout. One control record = one or two lines:
 #   "CLOSE\n"                       → Glogout
 #   "GW <code>\n<command>\n"        → gateway command; reply line = "<code>- ..."
-#   "CON <regex>\n<command>\n"      → forwarded console command; terminator = <regex>
+#   "CON <until>\n<match>\n<command>\n" → forwarded console; <match> may be empty
 _session_run() {
     JEDI_PORT="$1" JEDI_USER="$2" JEDI_PASS="$3" \
     JEDI_READY="$_SESSION_READY" JEDI_DONE="$_SESSION_DONE" \
@@ -203,14 +210,17 @@ while {1} {
     }
 
     if {[regexp {^CON (.+)$} $kind -> term]} {
-        if {[gets stdin cmd] == -1} break
+        if {[gets stdin match] == -1} break
+        if {[gets stdin cmd]   == -1} break
         send "C$cmd\r"
         set looping 1
         while {$looping} {
             expect {
                 -re "(\[^\n]*)\n" {
                     set line $expect_out(1,string)
-                    send_user "$line\n"
+                    if {$match eq "" || [regexp $match $line]} {
+                        send_user "$line\n"
+                    }
                     if {[regexp $term $line]} { set looping 0 }
                 }
                 timeout {

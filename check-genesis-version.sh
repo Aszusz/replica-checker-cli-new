@@ -11,7 +11,9 @@ source "$SCRIPT_DIR/session.sh"
 trap session_close EXIT
 session_open
 
-session_send_console --cmd "tell genesis info" --until "^Genesis: catalog" \
-    | grep '^Genesis: '
+session_send_console \
+    --cmd   "tell genesis info" \
+    --until "^Genesis: catalog" \
+    --match "^Genesis: "
 
 session_close
