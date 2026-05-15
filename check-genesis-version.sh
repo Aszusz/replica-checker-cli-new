@@ -4,25 +4,45 @@ set -euo pipefail
 # Automates this JeDI sequence against the local Domino server:
 #   telnet 0 1910
 #   Glogin admin pass
-#   Gconsole <fqdn>
+#   Gstatus              (auto-discover the JeDI server UID)
+#   Gconsole <UID>
 #   Ctell genesis info
 #   Glogout
 
 command -v expect >/dev/null 2>&1 || { echo "ERROR: expect is required (apt install expect)" >&2; exit 1; }
 
-FQDN=$(hostname -f)
-
-expect <<EOF
+expect <<'EOF'
 log_user 1
 set timeout 10
+
 spawn telnet 0 1910
-expect "250-"
+expect -re "250-.*\n"
+
+send_user ">>> Glogin admin pass\n"
 send "Glogin admin pass\r"
-expect "204-"
-send "Gconsole $FQDN\r"
-expect "210-"
+expect -re "204-.*\n"
+
+send_user ">>> Gstatus\n"
+send "Gstatus\r"
+expect -re "Configured domino servers:"
+expect -re "240- (\\S+): (\\S+)"
+set uid $expect_out(1,string)
+set state $expect_out(2,string)
+send_user ">>> discovered server UID: $uid (state: $state)\n"
+if {$state ne "RUNNING"} {
+    send_user "ERROR: server $uid is $state, not RUNNING — aborting\n"
+    exit 1
+}
+
+send_user ">>> Gconsole $uid\n"
+send "Gconsole $uid\r"
+expect -re "210-.*\n"
+
+send_user ">>> Ctell genesis info\n"
 send "Ctell genesis info\r"
 sleep 5
+
+send_user ">>> Glogout\n"
 send "Glogout\r"
 expect eof
 EOF
